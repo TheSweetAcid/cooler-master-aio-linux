@@ -170,7 +170,7 @@ def build_frame(cpu_pct, ghz_milli, temp_c, rpm, gpu_pct, ring_pct):
     frame[5] = (temp_value >> 8) & 0xff
     frame[6] = temp_value & 0xff
     frame[7] = 0x00
-    frame[8] = clamp(round(gpu_pct), 0, 100)
+    frame[8] = 0
     rpm_value = clamp(round(rpm), 0, 9999)
     frame[9] = (rpm_value >> 8) & 0xff
     frame[10] = rpm_value & 0xff
@@ -179,6 +179,12 @@ def build_frame(cpu_pct, ghz_milli, temp_c, rpm, gpu_pct, ring_pct):
     data = [REPORT_ID] + frame
     data.extend([0] * (REPORT_LEN - len(data)))
     return bytes(data), frame
+
+
+def temp_bar(temp_c, max_temp_c):
+    if max_temp_c <= 0:
+        return 0
+    return clamp(round(temp_c / max_temp_c * 10), 0, 10)
 
 
 def fmt_frame(frame):
@@ -193,6 +199,8 @@ def main():
     parser.add_argument("--ring", choices=["cpu", "gpu", "rpm"], default="gpu")
     parser.add_argument("--temp-mode", choices=["cpu", "gpu", "cycle"], default="cycle")
     parser.add_argument("--temp-switch", type=float, default=15.0, help="seconds per CPU/GPU temp page in cycle mode")
+    parser.add_argument("--cpu-max-temp", type=float, default=95.0, help="CPU temp in C that maps thermometer mini graph b9 to 10/10")
+    parser.add_argument("--gpu-max-temp", type=float, default=110.0, help="GPU temp in C that maps thermometer mini graph b9 to 10/10")
     parser.add_argument("--smooth", type=float, default=0.25, help="EMA alpha for percentage displays; 1 disables smoothing")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -244,6 +252,7 @@ def main():
         else:
             temp_raw = read_int(cpu_temp_path) if cpu_temp_path else None
             temp_icon = 0
+        max_temp_c = args.gpu_max_temp if temp_icon else args.cpu_max_temp
         temp_c = (temp_raw / 1000.0) if temp_raw is not None else 0
         ghz_milli = cpu_ghz_milli()
         rpm = read_int(rpm_path) if rpm_path else 0
@@ -257,13 +266,15 @@ def main():
 
         data, frame = build_frame(cpu_pct_s, ghz_milli, temp_c, rpm or 0, gpu_pct_s, ring_pct_s)
         frame[4] = temp_icon
+        frame[8] = temp_bar(temp_c, max_temp_c)
         data = bytes([REPORT_ID] + frame + [0] * (REPORT_LEN - 1 - len(frame)))
         with open(dev, "wb", buffering=0) as f:
             f.write(data)
         if args.verbose:
             print(
-                f"cpu={cpu_pct_s:5.1f}% temp={temp_c:5.1f}C/{temp_source} ghz={ghz_milli/1000:.2f} "
-                f"rpm={rpm or 0:4d} gpu={gpu_pct_s:5.1f}% ring={ring_pct_s:5.1f}% frame={fmt_frame(frame)}",
+                f"cpu={cpu_pct_s:5.1f}% temp={temp_c:5.1f}C/{temp_source} tempbar={frame[8]:2d}/10 "
+                f"ghz={ghz_milli/1000:.2f} rpm={rpm or 0:4d} gpu={gpu_pct_s:5.1f}% "
+                f"ring={ring_pct_s:5.1f}% frame={fmt_frame(frame)}",
                 flush=True,
             )
         if args.once:
