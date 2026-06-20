@@ -77,18 +77,18 @@ class PumpMapper:
 
     def set_byte(self, pos, value):
         if not 1 <= pos <= 13:
-            raise ValueError("b pozice musi byt 1..13")
+            raise ValueError("byte position must be 1..13")
         if not 0 <= value <= 255:
-            raise ValueError("byte hodnota musi byt 0..255")
+            raise ValueError("byte value must be 0..255")
         with self.lock:
             self.frame[pos - 1] = value
             self.scene = f"B{pos}={value}"
 
     def set_word(self, pos, value):
         if not 1 <= pos <= 12:
-            raise ValueError("w pozice musi byt 1..12")
+            raise ValueError("word position must be 1..12")
         if not 0 <= value <= 65535:
-            raise ValueError("word hodnota musi byt 0..65535")
+            raise ValueError("word value must be 0..65535")
         with self.lock:
             self.frame[pos - 1] = (value >> 8) & 0xff
             self.frame[pos] = value & 0xff
@@ -121,24 +121,24 @@ class PumpMapper:
 def print_help():
     print(
         """
-Prikazy:
-  show                 vypise aktualni scenu a 13 datovych bajtu
-  base                 vrati znamy baseline
-  bN VALUE             nastavi jeden byte, napr. b3 65 nebo b3 0x41
-  wN VALUE             nastavi big-endian dvojici od N, napr. w10 1234
-  cpu VALUE            zkratka pro b2 VALUE
-  ghz VALUE            zkratka pro w3 VALUE*1000, napr. ghz 4.20
-  temp VALUE           zkratka pro w6 VALUE, napr. temp 65
-  temp-src cpu|gpu     zkratka pro b5 0/1
-  unit c|f             zkratka pro b8 0/1
-  rpm VALUE            zkratka pro w10 VALUE
-  ring VALUE           zkratka pro b12 VALUE; 0..100, 100 = plny kruh
-  scene NAME           jen prejmenuje scenu pro poznamky
-  help                 tahle napoveda
-  quit                 konec
+Commands:
+  show                 print current scene and the 13 payload bytes
+  base                 restore the known baseline payload
+  bN VALUE             set one byte, for example: b3 65 or b3 0x41
+  wN VALUE             set a big-endian word starting at N, for example: w10 1234
+  cpu VALUE            shortcut for b2 VALUE
+  ghz VALUE            shortcut for w3 VALUE*1000, for example: ghz 4.20
+  temp VALUE           shortcut for w6 VALUE, for example: temp 65
+  temp-src cpu|gpu     shortcut for b5 0/1
+  unit c|f             shortcut for b8 0/1
+  rpm VALUE            shortcut for w10 VALUE
+  ring VALUE           shortcut for b12 VALUE; 0..100, 100 = full ring
+  scene NAME           rename the current scene for notes
+  help                 show this help
+  quit                 exit
 
-Pozice jsou payload pozice 1..13, bez report ID 0x10.
-Potvrzene aliasy: cpu, ghz, temp, temp-src, unit, rpm, ring.
+Positions are payload positions 1..13, excluding report ID 0x10.
+Confirmed aliases: cpu, ghz, temp, temp-src, unit, rpm, ring.
 """.strip()
     )
 
@@ -151,7 +151,7 @@ def main():
     if args.dev is None:
         args.dev = find_hidraw()
         if args.dev is None:
-            print(f"ERR: nenasel jsem Cooler Master HID {VENDOR_ID}:{PRODUCT_ID}; pouzij --dev /dev/hidrawX", file=sys.stderr)
+            print(f"ERR: Cooler Master HID {VENDOR_ID}:{PRODUCT_ID} was not found; use --dev /dev/hidrawX", file=sys.stderr)
             return 2
 
     mapper = PumpMapper(args.dev, args.interval)
@@ -185,7 +185,7 @@ def main():
                 mapper.reset()
             elif cmd == "scene":
                 if len(parts) < 2:
-                    raise ValueError("scene potrebuje jmeno")
+                    raise ValueError("scene needs a name")
                 mapper.set_scene(" ".join(parts[1:]))
             elif cmd == "cpu":
                 if len(parts) != 2:
@@ -241,7 +241,7 @@ def main():
                     raise ValueError("wN VALUE")
                 mapper.set_word(parse_int(cmd[1:]), parse_int(parts[1]))
             else:
-                raise ValueError("neznamy prikaz, dej help")
+                raise ValueError("unknown command, type help")
         except Exception as exc:
             print(f"ERR: {exc}")
             continue
