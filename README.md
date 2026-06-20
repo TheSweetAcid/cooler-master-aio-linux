@@ -109,11 +109,12 @@ w3-b4    CPU frequency in MHz, big-endian
 b5       temperature icon/source: 0 = CPU icon, 1 = GPU icon
 w6-b7    temperature in whole degrees, big-endian
 b8       temperature unit: 0 = Celsius, 1 = Fahrenheit
-b9       GPU usage percent, 0..100
+b9        thermometer mini graph, 0..10
 w10-b11  fan RPM, big-endian
 b12      outer ring segment count, 0..20
 b13      unknown / no visible change observed yet
 ```
+GPU usage is currently used as a source for the outer ring through b12, scaled from 0..100% to 0..20 segments.
 
 Important note: the byte numbering above describes the payload after the report ID. If your write buffer includes the report ID as byte `0`, shift payload offsets by `+1`.
 
