@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+import argparse
+import glob
+import os
+import signal
+import sys
+import time
+
+
+REPORT_ID = 0x10
+REPORT_LEN = 64
+VENDOR_ID = "2516"
+PRODUCT_ID = "0234"
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def read_text(path):
+    try:
+        with open(path, "r", encoding="ascii") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def read_int(path):
+    text = read_text(path)
+    if text is None:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def find_hidraw():
+    root = "/sys/class/hidraw"
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return None
+
+    for name in names:
+        dev_root = os.path.realpath(os.path.join(root, name, "device"))
+        current = dev_root
+        for _ in range(8):
+            vendor = (read_text(os.path.join(current, "idVendor")) or "").lower()
+            product = (read_text(os.path.join(current, "idProduct")) or "").lower()
+            if vendor == VENDOR_ID and product == PRODUCT_ID:
+                return os.path.join("/dev", name)
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    return None
+
+
+def hwmons_by_name(name):
+    result = []
+    for hwmon in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        if read_text(os.path.join(hwmon, "name")) == name:
+            result.append(hwmon)
+    return result
+
+
+def find_labeled_input(hwmon, prefix, wanted_label):
+    for label_path in glob.glob(os.path.join(hwmon, f"{prefix}*_label")):
+        label = read_text(label_path)
+        if label == wanted_label:
+            input_path = label_path[:-6] + "_input"
+            if os.path.exists(input_path):
+                return input_path
+    return None
+
+
+def find_cpu_temp_path():
+    for hwmon in hwmons_by_name("k10temp"):
+        path = find_labeled_input(hwmon, "temp", "Tctl")
+        if path:
+            return path
+        fallback = os.path.join(hwmon, "temp1_input")
+        if os.path.exists(fallback):
+            return fallback
+    return None
+
+
+def find_rpm_path():
+    for hwmon in hwmons_by_name("nct6799"):
+        path = os.path.join(hwmon, "fan2_input")
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def find_gpu_busy_path():
+    candidates = []
+    for path in sorted(glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")):
+        driver = os.path.basename(os.path.realpath(os.path.join(os.path.dirname(path), "driver")))
+        score = 0 if driver == "amdgpu" else 1
+        candidates.append((score, path))
+    if not candidates:
+        return None
+    return sorted(candidates)[0][1]
+
+
+def find_gpu_temp_path():
+    for hwmon in hwmons_by_name("amdgpu"):
+        path = find_labeled_input(hwmon, "temp", "edge")
+        if path:
+            return path
+        fallback = os.path.join(hwmon, "temp1_input")
+        if os.path.exists(fallback):
+            return fallback
+    return None
+
+
+def smooth(prev, value, alpha):
+    if prev is None:
+        return value
+    return prev + (value - prev) * alpha
+
+
+def cpu_times():
+    try:
+        with open("/proc/stat", "r", encoding="ascii") as f:
+            line = f.readline().strip()
+    except OSError:
+        return None
+    if not line.startswith("cpu "):
+        return None
+    values = [int(x) for x in line.split()[1:]]
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    total = sum(values)
+    return idle, total
+
+
+def cpu_usage(prev):
+    now = cpu_times()
+    if prev is None or now is None:
+        return 0, now
+    idle_delta = now[0] - prev[0]
+    total_delta = now[1] - prev[1]
+    if total_delta <= 0:
+        return 0, now
+    usage = round((1.0 - idle_delta / total_delta) * 100)
+    return clamp(usage, 0, 100), now
+
+
+def cpu_ghz_milli():
+    values = []
+    for path in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq"):
+        value = read_int(path)
+        if value:
+            values.append(value)
+    if not values:
+        return 0
+    return clamp(round(sum(values) / len(values) / 1000), 0, 9999)
+
+
+def build_frame(cpu_pct, ghz_milli, temp_c, rpm, gpu_pct, ring_pct):
+    frame = [0] * 13
+    frame[0] = 0x01
+    frame[1] = clamp(round(cpu_pct), 0, 100)
+    frame[2] = (ghz_milli >> 8) & 0xff
+    frame[3] = ghz_milli & 0xff
+    frame[4] = 0x00
+    temp_value = clamp(round(temp_c), 0, 999)
+    frame[5] = (temp_value >> 8) & 0xff
+    frame[6] = temp_value & 0xff
+    frame[7] = 0x00
+    frame[8] = clamp(round(gpu_pct), 0, 100)
+    rpm_value = clamp(round(rpm), 0, 9999)
+    frame[9] = (rpm_value >> 8) & 0xff
+    frame[10] = rpm_value & 0xff
+    frame[11] = clamp(round(ring_pct / 5), 0, 20)
+    frame[12] = 0x0d
+    data = [REPORT_ID] + frame
+    data.extend([0] * (REPORT_LEN - len(data)))
+    return bytes(data), frame
+
+
+def fmt_frame(frame):
+    return " ".join(f"{b:02x}" for b in frame)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Cooler Master AIO display userspace feeder")
+    parser.add_argument("--dev", default=None, help="default: auto-detect 2516:0234")
+    parser.add_argument("--interval", type=float, default=5.0)
+    parser.add_argument("--rpm-path", default=None, help="default: nct6799 fan2_input")
+    parser.add_argument("--ring", choices=["cpu", "gpu", "rpm"], default="gpu")
+    parser.add_argument("--temp-mode", choices=["cpu", "gpu", "cycle"], default="cycle")
+    parser.add_argument("--temp-switch", type=float, default=15.0, help="seconds per CPU/GPU temp page in cycle mode")
+    parser.add_argument("--smooth", type=float, default=0.25, help="EMA alpha for percentage displays; 1 disables smoothing")
+    parser.add_argument("--once", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    dev = args.dev or find_hidraw()
+    if dev is None:
+        print(f"ERR: nenasel jsem Cooler Master HID {VENDOR_ID}:{PRODUCT_ID}", file=sys.stderr)
+        return 2
+
+    cpu_temp_path = find_cpu_temp_path()
+    gpu_temp_path = find_gpu_temp_path()
+    rpm_path = args.rpm_path or find_rpm_path()
+    gpu_busy_path = find_gpu_busy_path()
+    if args.verbose:
+        print(f"dev={dev}")
+        print(f"cpu_temp={cpu_temp_path}")
+        print(f"gpu_temp={gpu_temp_path}")
+        print(f"rpm={rpm_path}")
+        print(f"gpu_busy={gpu_busy_path}")
+
+    running = True
+
+    def stop(_signum, _frame):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+
+    prev_cpu = cpu_times()
+    start_time = time.monotonic()
+    cpu_pct_s = None
+    gpu_pct_s = None
+    ring_pct_s = None
+    while running:
+        cpu_pct, prev_cpu = cpu_usage(prev_cpu)
+        gpu_pct = read_int(gpu_busy_path) if gpu_busy_path else 0
+        cpu_pct_s = smooth(cpu_pct_s, cpu_pct, args.smooth)
+        gpu_pct_s = smooth(gpu_pct_s, gpu_pct or 0, args.smooth)
+
+        temp_source = args.temp_mode
+        if args.temp_mode == "cycle":
+            page = int((time.monotonic() - start_time) // max(args.temp_switch, 1.0)) % 2
+            temp_source = "gpu" if page and gpu_temp_path else "cpu"
+        if temp_source == "gpu" and gpu_temp_path:
+            temp_raw = read_int(gpu_temp_path)
+            temp_icon = 1
+        else:
+            temp_raw = read_int(cpu_temp_path) if cpu_temp_path else None
+            temp_icon = 0
+        temp_c = (temp_raw / 1000.0) if temp_raw is not None else 0
+        ghz_milli = cpu_ghz_milli()
+        rpm = read_int(rpm_path) if rpm_path else 0
+        if args.ring == "gpu":
+            ring_pct = gpu_pct_s
+        elif args.ring == "rpm":
+            ring_pct = clamp((rpm or 0) / 2000 * 100, 0, 100)
+        else:
+            ring_pct = cpu_pct_s
+        ring_pct_s = smooth(ring_pct_s, ring_pct, args.smooth)
+
+        data, frame = build_frame(cpu_pct_s, ghz_milli, temp_c, rpm or 0, gpu_pct_s, ring_pct_s)
+        frame[4] = temp_icon
+        data = bytes([REPORT_ID] + frame + [0] * (REPORT_LEN - 1 - len(frame)))
+        with open(dev, "wb", buffering=0) as f:
+            f.write(data)
+        if args.verbose:
+            print(
+                f"cpu={cpu_pct_s:5.1f}% temp={temp_c:5.1f}C/{temp_source} ghz={ghz_milli/1000:.2f} "
+                f"rpm={rpm or 0:4d} gpu={gpu_pct_s:5.1f}% ring={ring_pct_s:5.1f}% frame={fmt_frame(frame)}",
+                flush=True,
+            )
+        if args.once:
+            break
+        time.sleep(args.interval)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
