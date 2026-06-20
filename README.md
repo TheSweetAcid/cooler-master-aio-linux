@@ -51,7 +51,7 @@ Report ID:      0x10
 Report length:  64 bytes
 
 Known payload map so far, bytes after the report ID:
- 
+
 b1        unknown / mode-ish
 b2        CPU usage %, 0..100
 b3-b4     CPU frequency in MHz, big-endian
@@ -69,3 +69,39 @@ b13       unknown / no visible change observed yet
 
 Remaining bytes:
   zero padding
+
+Important note: the byte numbering above describes the payload after the report ID. If your write buffer includes the report ID as byte 0, shift payload offsets by +1.
+
+Sensor sources used on my system
+
+Current implementation uses Linux sensor data such as:
+
+CPU temperature from k10temp
+CPU usage from /proc/stat
+CPU frequency from cpufreq
+GPU usage from AMD gpu_busy_percent
+fan RPM from nct6799 via nct6775
+
+Fan sensor mapping is motherboard-specific.
+
+On my system:
+
+fan2 = AIO radiator fans
+fan7 = likely pump RPM
+Known limitations
+Tested only on my hardware.
+The small thermometer graph is not mapped yet.
+Color control is not mapped.
+Sensor paths may need adjustment on other systems.
+Fan mapping is motherboard-specific.
+Only one Cooler Master AIO HID device is currently known/tested.
+This writes directly to a HID device; use at your own risk.
+Disclaimer
+
+This project is unofficial and is not affiliated with Cooler Master.
+
+It is an experimental proof of concept, provided as-is, with no warranty. Use it, fork it, modify it, break it, fix it, or adapt it for your own hardware — but use it at your own risk.
+
+License
+
+MIT License.
