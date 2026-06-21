@@ -12,6 +12,34 @@ REPORT_LEN = 64
 VENDOR_ID = "2516"
 PRODUCT_ID = "0234"
 
+# User-tunable defaults. Keep sensor discovery dynamic; hwmon numbers can change
+# after reboot and between systems.
+DEFAULT_INTERVAL = 5.0
+DEFAULT_RING = "gpu"
+DEFAULT_TEMP_MODE = "cycle"
+DEFAULT_TEMP_SWITCH = 15.0
+DEFAULT_CPU_MAX_TEMP = 95.0
+DEFAULT_GPU_MAX_TEMP = 110.0
+DEFAULT_SMOOTH = 0.25
+DEFAULT_RPM_HWMON = "nct6799"
+DEFAULT_RPM_INPUT = "fan2_input"
+DEFAULT_CPU_TEMP_HWMON = "k10temp"
+DEFAULT_CPU_TEMP_LABEL = "Tctl"
+DEFAULT_GPU_HWMON = "amdgpu"
+DEFAULT_GPU_TEMP_LABEL = "edge"
+
+# Payload map, 1-based positions after report ID 0x10:
+# b1       unknown / mode-ish
+# b2       CPU usage percent, 0..100
+# w3-b4    CPU frequency in MHz, big-endian
+# b5       temperature icon/source: 0 = CPU, 1 = GPU
+# w6-b7    temperature in whole degrees C/F, big-endian
+# b8       temperature unit: 0 = C, 1 = F
+# b9       thermometer mini graph, 0..10
+# w10-b11  fan RPM, big-endian
+# b12      outer ring segment count, 0..20
+# b13      unknown
+
 
 def clamp(value, low, high):
     return max(low, min(high, value))
@@ -76,8 +104,8 @@ def find_labeled_input(hwmon, prefix, wanted_label):
 
 
 def find_cpu_temp_path():
-    for hwmon in hwmons_by_name("k10temp"):
-        path = find_labeled_input(hwmon, "temp", "Tctl")
+    for hwmon in hwmons_by_name(DEFAULT_CPU_TEMP_HWMON):
+        path = find_labeled_input(hwmon, "temp", DEFAULT_CPU_TEMP_LABEL)
         if path:
             return path
         fallback = os.path.join(hwmon, "temp1_input")
@@ -87,8 +115,8 @@ def find_cpu_temp_path():
 
 
 def find_rpm_path():
-    for hwmon in hwmons_by_name("nct6799"):
-        path = os.path.join(hwmon, "fan2_input")
+    for hwmon in hwmons_by_name(DEFAULT_RPM_HWMON):
+        path = os.path.join(hwmon, DEFAULT_RPM_INPUT)
         if os.path.exists(path):
             return path
     return None
@@ -106,8 +134,8 @@ def find_gpu_busy_path():
 
 
 def find_gpu_temp_path():
-    for hwmon in hwmons_by_name("amdgpu"):
-        path = find_labeled_input(hwmon, "temp", "edge")
+    for hwmon in hwmons_by_name(DEFAULT_GPU_HWMON):
+        path = find_labeled_input(hwmon, "temp", DEFAULT_GPU_TEMP_LABEL)
         if path:
             return path
         fallback = os.path.join(hwmon, "temp1_input")
@@ -194,14 +222,14 @@ def fmt_frame(frame):
 def main():
     parser = argparse.ArgumentParser(description="Cooler Master AIO display userspace feeder")
     parser.add_argument("--dev", default=None, help="default: auto-detect 2516:0234")
-    parser.add_argument("--interval", type=float, default=5.0)
-    parser.add_argument("--rpm-path", default=None, help="default: nct6799 fan2_input")
-    parser.add_argument("--ring", choices=["cpu", "gpu", "rpm"], default="gpu")
-    parser.add_argument("--temp-mode", choices=["cpu", "gpu", "cycle"], default="cycle")
-    parser.add_argument("--temp-switch", type=float, default=15.0, help="seconds per CPU/GPU temp page in cycle mode")
-    parser.add_argument("--cpu-max-temp", type=float, default=95.0, help="CPU temp in C that maps thermometer mini graph b9 to 10/10")
-    parser.add_argument("--gpu-max-temp", type=float, default=110.0, help="GPU temp in C that maps thermometer mini graph b9 to 10/10")
-    parser.add_argument("--smooth", type=float, default=0.25, help="EMA alpha for percentage displays; 1 disables smoothing")
+    parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
+    parser.add_argument("--rpm-path", default=None, help=f"default: {DEFAULT_RPM_HWMON} {DEFAULT_RPM_INPUT}")
+    parser.add_argument("--ring", choices=["cpu", "gpu", "rpm"], default=DEFAULT_RING)
+    parser.add_argument("--temp-mode", choices=["cpu", "gpu", "cycle"], default=DEFAULT_TEMP_MODE)
+    parser.add_argument("--temp-switch", type=float, default=DEFAULT_TEMP_SWITCH, help="seconds per CPU/GPU temp page in cycle mode")
+    parser.add_argument("--cpu-max-temp", type=float, default=DEFAULT_CPU_MAX_TEMP, help="CPU temp in C that maps thermometer mini graph b9 to 10/10")
+    parser.add_argument("--gpu-max-temp", type=float, default=DEFAULT_GPU_MAX_TEMP, help="GPU temp in C that maps thermometer mini graph b9 to 10/10")
+    parser.add_argument("--smooth", type=float, default=DEFAULT_SMOOTH, help="EMA alpha for percentage displays; 1 disables smoothing")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()

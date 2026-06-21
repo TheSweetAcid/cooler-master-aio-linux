@@ -12,6 +12,18 @@ REPORT_LEN = 64
 VENDOR_ID = "2516"
 PRODUCT_ID = "0234"
 
+# Payload map, 1-based positions after report ID 0x10:
+# b1       unknown / mode-ish
+# b2       CPU usage percent, 0..100
+# w3-b4    CPU frequency in MHz, big-endian
+# b5       temperature icon/source: 0 = CPU, 1 = GPU
+# w6-b7    temperature in whole degrees C/F, big-endian
+# b8       temperature unit: 0 = C, 1 = F
+# b9       thermometer mini graph, 0..10
+# w10-b11  fan RPM, big-endian
+# b12      outer ring segment count, 0..20
+# b13      unknown
+
 
 def parse_int(text):
     text = text.strip().lower()
@@ -121,24 +133,25 @@ class PumpMapper:
 def print_help():
     print(
         """
-Prikazy:
-  show                 vypise aktualni scenu a 13 datovych bajtu
-  base                 vrati znamy baseline
-  bN VALUE             nastavi jeden byte, napr. b3 65 nebo b3 0x41
-  wN VALUE             nastavi big-endian dvojici od N, napr. w10 1234
-  cpu VALUE            zkratka pro b2 VALUE
-  ghz VALUE            zkratka pro w3 VALUE*1000, napr. ghz 4.20
-  temp VALUE           zkratka pro w6 VALUE, napr. temp 65
-  temp-src cpu|gpu     zkratka pro b5 0/1
-  unit c|f             zkratka pro b8 0/1
-  rpm VALUE            zkratka pro w10 VALUE
-  ring VALUE           zkratka pro b12 VALUE; 0..100, 100 = plny kruh
-  scene NAME           jen prejmenuje scenu pro poznamky
-  help                 tahle napoveda
-  quit                 konec
+Commands / Prikazy:
+  show                 print current scene and 13 payload bytes / vypise scenu a payload
+  base                 reset known baseline / vrati znamy baseline
+  bN VALUE             set one byte, e.g. b3 65 or b3 0x41 / nastavi byte
+  wN VALUE             set big-endian word from N, e.g. w10 1234 / nastavi dvojici
+  cpu VALUE            alias for b2 VALUE; 0..100 / zkratka pro CPU %
+  ghz VALUE            alias for w3 VALUE*1000, e.g. ghz 4.20 / CPU frekvence
+  temp VALUE           alias for w6 VALUE, e.g. temp 65 / teplota
+  temp-src cpu|gpu     alias for b5 0/1 / ikonka zdroje teploty
+  unit c|f             alias for b8 0/1 / jednotka teploty
+  tempbar VALUE        alias for b9 VALUE; 0..10 / mini graf u teplomeru
+  rpm VALUE            alias for w10 VALUE / otacky
+  ring VALUE           alias for b12 VALUE; 0..20 / vnejsi kruh
+  scene NAME           rename current scene only / prejmenuje scenu pro poznamky
+  help                 show this help / tahle napoveda
+  quit                 exit / konec
 
+Payload positions are 1..13 and do not include report ID 0x10.
 Pozice jsou payload pozice 1..13, bez report ID 0x10.
-Potvrzene aliasy: cpu, ghz, temp, temp-src, unit, rpm, ring.
 """.strip()
     )
 
@@ -223,6 +236,11 @@ def main():
                 else:
                     raise ValueError("unit c|f")
                 mapper.set_scene(f"UNIT={value.upper()}")
+            elif cmd == "tempbar":
+                if len(parts) != 2:
+                    raise ValueError("tempbar VALUE")
+                mapper.set_byte(9, parse_int(parts[1]))
+                mapper.set_scene(f"TEMPBAR={parts[1]}")
             elif cmd == "rpm":
                 if len(parts) != 2:
                     raise ValueError("rpm VALUE")
