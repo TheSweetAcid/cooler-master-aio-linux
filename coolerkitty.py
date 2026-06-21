@@ -21,7 +21,11 @@ DEFAULT_TEMP_UNIT = "c"  # displayed temperature unit: c, f
 DEFAULT_TEMP_SWITCH = 15.0  # seconds per CPU/GPU page when temp mode is cycle
 DEFAULT_CPU_MAX_TEMP = 95.0  # C value that maps CPU tempbar to 10/10
 DEFAULT_GPU_MAX_TEMP = 110.0  # C value that maps GPU tempbar to 10/10
-DEFAULT_HIGH_TEMP = 85.0  # future alert threshold in C; not used by current renderer
+DEFAULT_HIGH_TEMP = 85.0  # C threshold for optional alert renderer
+DEFAULT_ALERT_EFFECT = "blink"  # hot ring effect: blink, scan
+DEFAULT_ALERT_BLINK_HALF_PERIOD = 0.1  # seconds between full/off blink states
+DEFAULT_ALERT_SCAN_STEP = 0.025  # seconds per 0->20->0 scan step
+DEFAULT_ALERT_SWITCH = 3.0  # seconds per CPU/GPU page when both are hot
 DEFAULT_SMOOTH = 0.25  # EMA alpha for percentages; lower = calmer, 1.0 = raw
 DEFAULT_RPM_HWMON = "nct6799"  # hwmon chip name for radiator fan RPM
 DEFAULT_RPM_INPUT = "fan2_input"  # motherboard-specific fan input
@@ -213,6 +217,10 @@ def build_frame(cpu_pct, ghz_milli, temp_value, temp_unit, rpm, gpu_pct, ring_pc
     return bytes(data), frame
 
 
+def frame_bytes(frame):
+    return bytes([REPORT_ID] + frame + [0] * (REPORT_LEN - 1 - len(frame)))
+
+
 def temp_bar(temp_c, max_temp_c):
     if max_temp_c <= 0:
         return 0
@@ -229,6 +237,12 @@ def fmt_frame(frame):
     return " ".join(f"{b:02x}" for b in frame)
 
 
+def alert_ring_sequence(effect):
+    if effect == "scan":
+        return list(range(21)) + list(range(19, -1, -1))
+    return [20, 0]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cooler Master AIO display userspace feeder")
     parser.add_argument("--dev", default=None, help="default: auto-detect 2516:0234")
@@ -242,6 +256,12 @@ def main():
     parser.add_argument("--temp-switch", type=float, default=DEFAULT_TEMP_SWITCH, help="seconds per CPU/GPU temp page in cycle mode")
     parser.add_argument("--cpu-max-temp", type=float, default=DEFAULT_CPU_MAX_TEMP, help="CPU temp in C that maps thermometer mini graph b9 to 10/10")
     parser.add_argument("--gpu-max-temp", type=float, default=DEFAULT_GPU_MAX_TEMP, help="GPU temp in C that maps thermometer mini graph b9 to 10/10")
+    parser.add_argument("--alert-enable", action="store_true", help="enable high-temperature alert renderer")
+    parser.add_argument("--high-temp", type=float, default=DEFAULT_HIGH_TEMP, help="temperature in C that triggers alert renderer")
+    parser.add_argument("--alert-effect", choices=["blink", "scan"], default=DEFAULT_ALERT_EFFECT, help="ring animation used while hot")
+    parser.add_argument("--alert-blink-half-period", type=float, default=DEFAULT_ALERT_BLINK_HALF_PERIOD, help="seconds between full/off blink states")
+    parser.add_argument("--alert-scan-step", type=float, default=DEFAULT_ALERT_SCAN_STEP, help="seconds per 0..20..0 scan step")
+    parser.add_argument("--alert-switch", type=float, default=DEFAULT_ALERT_SWITCH, help="seconds per CPU/GPU page when both are hot")
     parser.add_argument("--smooth", type=float, default=DEFAULT_SMOOTH, help="EMA alpha for percentage displays; 1 disables smoothing")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -280,23 +300,41 @@ def main():
     gpu_pct_s = None
     ring_pct_s = None
     while running:
+        now = time.monotonic()
         cpu_pct, prev_cpu = cpu_usage(prev_cpu)
         gpu_pct = read_int(gpu_busy_path) if gpu_busy_path else 0
         cpu_pct_s = smooth(cpu_pct_s, cpu_pct, args.smooth)
         gpu_pct_s = smooth(gpu_pct_s, gpu_pct or 0, args.smooth)
 
-        temp_source = args.temp_mode
-        if args.temp_mode == "cycle":
-            page = int((time.monotonic() - start_time) // max(args.temp_switch, 1.0)) % 2
+        cpu_temp_raw = read_int(cpu_temp_path) if cpu_temp_path else None
+        gpu_temp_raw = read_int(gpu_temp_path) if gpu_temp_path else None
+        cpu_temp_c = (cpu_temp_raw / 1000.0) if cpu_temp_raw is not None else 0
+        gpu_temp_c = (gpu_temp_raw / 1000.0) if gpu_temp_raw is not None else 0
+        cpu_hot = args.alert_enable and cpu_temp_raw is not None and cpu_temp_c >= args.high_temp
+        gpu_hot = args.alert_enable and gpu_temp_raw is not None and gpu_temp_c >= args.high_temp
+        alert_active = cpu_hot or gpu_hot
+
+        if cpu_hot and gpu_hot:
+            page = int(now // max(args.alert_switch, 1.0)) % 2
+            temp_source = "gpu" if page else "cpu"
+        elif gpu_hot:
+            temp_source = "gpu"
+        elif cpu_hot:
+            temp_source = "cpu"
+        else:
+            temp_source = args.temp_mode
+
+        if temp_source == "cycle":
+            page = int((now - start_time) // max(args.temp_switch, 1.0)) % 2
             temp_source = "gpu" if page and gpu_temp_path else "cpu"
-        if temp_source == "gpu" and gpu_temp_path:
-            temp_raw = read_int(gpu_temp_path)
+
+        if temp_source == "gpu" and gpu_temp_raw is not None:
+            temp_c = gpu_temp_c
             temp_icon = 1
         else:
-            temp_raw = read_int(cpu_temp_path) if cpu_temp_path else None
+            temp_c = cpu_temp_c
             temp_icon = 0
         max_temp_c = args.gpu_max_temp if temp_icon else args.cpu_max_temp
-        temp_c = (temp_raw / 1000.0) if temp_raw is not None else 0
         ghz_milli = cpu_ghz_milli()
         rpm = read_int(rpm_path) if rpm_path else 0
         pump_rpm = read_int(pump_rpm_path) if pump_rpm_path else 0
@@ -314,20 +352,33 @@ def main():
         data, frame = build_frame(cpu_pct_s, ghz_milli, temp_display, args.temp_unit, rpm or 0, gpu_pct_s, ring_pct_s)
         frame[4] = temp_icon
         frame[8] = temp_bar(temp_c, max_temp_c)
-        data = bytes([REPORT_ID] + frame + [0] * (REPORT_LEN - 1 - len(frame)))
-        with open(dev, "wb", buffering=0) as f:
-            f.write(data)
+        data = frame_bytes(frame)
         if args.verbose:
             print(
-                f"cpu={cpu_pct_s:5.1f}% temp={temp_c:5.1f}C/{temp_source} display={temp_display:5.1f}{args.temp_unit.upper()} "
+                f"alert={str(alert_active).lower()} cpu={cpu_pct_s:5.1f}% temp={temp_c:5.1f}C/{temp_source} "
+                f"display={temp_display:5.1f}{args.temp_unit.upper()} "
                 f"tempbar={frame[8]:2d}/10 "
                 f"ghz={ghz_milli/1000:.2f} rpm={rpm or 0:4d} pump={pump_rpm or 0:4d} gpu={gpu_pct_s:5.1f}% "
                 f"ring={ring_pct_s:5.1f}% frame={fmt_frame(frame)}",
                 flush=True,
             )
+        with open(dev, "wb", buffering=0) as f:
+            if alert_active:
+                step = args.alert_scan_step if args.alert_effect == "scan" else args.alert_blink_half_period
+                for segment in alert_ring_sequence(args.alert_effect):
+                    frame[11] = segment
+                    f.write(frame_bytes(frame))
+                    if args.once:
+                        break
+                    if not running:
+                        break
+                    time.sleep(max(step, 0.01))
+            else:
+                f.write(data)
         if args.once:
             break
-        time.sleep(args.interval)
+        if not alert_active:
+            time.sleep(args.interval)
 
     return 0
 

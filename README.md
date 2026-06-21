@@ -89,6 +89,10 @@ DEFAULT_TEMP_SWITCH = 15.0
 DEFAULT_CPU_MAX_TEMP = 95.0
 DEFAULT_GPU_MAX_TEMP = 110.0
 DEFAULT_HIGH_TEMP = 85.0
+DEFAULT_ALERT_EFFECT = "blink"
+DEFAULT_ALERT_BLINK_HALF_PERIOD = 0.1
+DEFAULT_ALERT_SCAN_STEP = 0.025
+DEFAULT_ALERT_SWITCH = 3.0
 DEFAULT_SMOOTH = 0.25
 DEFAULT_PUMP_RPM_INPUT = "fan7_input"
 DEFAULT_PUMP_MAX_RPM = 3200.0
@@ -99,11 +103,19 @@ Those defaults are meant to be readable and easy to adjust for experiments. Runt
 ```bash
 python3 ./coolerkitty.py --cpu-max-temp 90 --gpu-max-temp 105 --ring gpu --temp-switch 15 --temp-unit c
 python3 ./coolerkitty.py --ring pump --pump-max-rpm 3200
+python3 ./coolerkitty.py --alert-enable --high-temp 85 --alert-effect blink
 ```
 
 Sensor discovery is intentionally still dynamic. Avoid hard-coding paths like `hwmon3/temp1_input` for shared use because Linux `hwmon` numbers can change after reboot and differ between systems.
 
-`DEFAULT_HIGH_TEMP` is reserved for a future alert policy. The current renderer does not trigger special alert animation yet.
+The alert renderer is disabled by default. With `--alert-enable`, temperatures at or above `--high-temp` lock the display to the hot sensor. If both CPU and GPU are hot, the temperature page alternates every `--alert-switch` seconds. The outer ring is temporarily taken over by the selected alert animation.
+
+Alert effects:
+
+```text
+blink  full ring 20/0 rapid blink
+scan   ring scan 0 -> 20 -> 0
+```
 
 ## Device / HID notes
 
