@@ -89,12 +89,15 @@ DEFAULT_TEMP_SWITCH = 15.0
 DEFAULT_CPU_MAX_TEMP = 95.0
 DEFAULT_GPU_MAX_TEMP = 110.0
 DEFAULT_SMOOTH = 0.25
+DEFAULT_PUMP_RPM_INPUT = "fan7_input"
+DEFAULT_PUMP_MAX_RPM = 3200.0
 ```
 
 Those defaults are meant to be readable and easy to adjust for experiments. Runtime overrides are still available through command-line arguments, for example:
 
 ```bash
 python3 ./coolerkitty.py --cpu-max-temp 90 --gpu-max-temp 105 --ring gpu --temp-switch 15 --temp-unit c
+python3 ./coolerkitty.py --ring pump --pump-max-rpm 3200
 ```
 
 Sensor discovery is intentionally still dynamic. Avoid hard-coding paths like `hwmon3/temp1_input` for shared use because Linux `hwmon` numbers can change after reboot and differ between systems.
@@ -141,6 +144,7 @@ b13      unknown / no visible change observed yet
 Important note: the byte numbering above describes the payload after the report ID. If your write buffer includes the report ID as byte `0`, shift payload offsets by `+1`.
 
 GPU usage is currently used as a source for the outer ring through b12, scaled from 0..100% to 0..20 segments.
+The outer ring can also use CPU usage, displayed fan RPM, or pump RPM with `--ring cpu|gpu|rpm|pump`.
 
 ## Sensor sources used on my system
 
@@ -160,6 +164,12 @@ On my system:
 ```text
 fan2 = AIO radiator fans
 fan7 = likely pump RPM
+```
+
+Pump RPM can be used as the outer ring source on systems where the pump is exposed as a motherboard fan input:
+
+```bash
+python3 ./coolerkitty.py --ring pump --pump-rpm-path /sys/class/hwmon/hwmonX/fan7_input --pump-max-rpm 3200
 ```
 
 ## Known limitations / scope

@@ -15,7 +15,7 @@ PRODUCT_ID = "0234"
 # User-tunable defaults. Keep sensor discovery dynamic; hwmon numbers can change
 # after reboot and between systems.
 DEFAULT_INTERVAL = 5.0  # seconds between display refreshes
-DEFAULT_RING = "gpu"  # outer ring source: cpu, gpu, rpm
+DEFAULT_RING = "gpu"  # outer ring source: cpu, gpu, rpm, pump
 DEFAULT_TEMP_MODE = "cycle"  # temperature page: cpu, gpu, cycle
 DEFAULT_TEMP_UNIT = "c"  # displayed temperature unit: c, f
 DEFAULT_TEMP_SWITCH = 15.0  # seconds per CPU/GPU page when temp mode is cycle
@@ -24,6 +24,8 @@ DEFAULT_GPU_MAX_TEMP = 110.0  # C value that maps GPU tempbar to 10/10
 DEFAULT_SMOOTH = 0.25  # EMA alpha for percentages; lower = calmer, 1.0 = raw
 DEFAULT_RPM_HWMON = "nct6799"  # hwmon chip name for radiator fan RPM
 DEFAULT_RPM_INPUT = "fan2_input"  # motherboard-specific fan input
+DEFAULT_PUMP_RPM_INPUT = "fan7_input"  # motherboard-specific pump input
+DEFAULT_PUMP_MAX_RPM = 3200.0  # pump RPM that maps outer ring to 100%
 DEFAULT_CPU_TEMP_HWMON = "k10temp"  # CPU temperature hwmon chip
 DEFAULT_CPU_TEMP_LABEL = "Tctl"  # preferred CPU temperature label
 DEFAULT_GPU_HWMON = "amdgpu"  # AMD GPU hwmon chip
@@ -115,9 +117,9 @@ def find_cpu_temp_path():
     return None
 
 
-def find_rpm_path():
+def find_rpm_path(input_name=DEFAULT_RPM_INPUT):
     for hwmon in hwmons_by_name(DEFAULT_RPM_HWMON):
-        path = os.path.join(hwmon, DEFAULT_RPM_INPUT)
+        path = os.path.join(hwmon, input_name)
         if os.path.exists(path):
             return path
     return None
@@ -231,7 +233,9 @@ def main():
     parser.add_argument("--dev", default=None, help="default: auto-detect 2516:0234")
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
     parser.add_argument("--rpm-path", default=None, help=f"default: {DEFAULT_RPM_HWMON} {DEFAULT_RPM_INPUT}")
-    parser.add_argument("--ring", choices=["cpu", "gpu", "rpm"], default=DEFAULT_RING)
+    parser.add_argument("--pump-rpm-path", default=None, help=f"default: {DEFAULT_RPM_HWMON} {DEFAULT_PUMP_RPM_INPUT}")
+    parser.add_argument("--pump-max-rpm", type=float, default=DEFAULT_PUMP_MAX_RPM, help="pump RPM that maps outer ring to 100%%")
+    parser.add_argument("--ring", choices=["cpu", "gpu", "rpm", "pump"], default=DEFAULT_RING)
     parser.add_argument("--temp-mode", choices=["cpu", "gpu", "cycle"], default=DEFAULT_TEMP_MODE)
     parser.add_argument("--temp-unit", choices=["c", "f"], default=DEFAULT_TEMP_UNIT, help="displayed temperature unit")
     parser.add_argument("--temp-switch", type=float, default=DEFAULT_TEMP_SWITCH, help="seconds per CPU/GPU temp page in cycle mode")
@@ -250,12 +254,14 @@ def main():
     cpu_temp_path = find_cpu_temp_path()
     gpu_temp_path = find_gpu_temp_path()
     rpm_path = args.rpm_path or find_rpm_path()
+    pump_rpm_path = args.pump_rpm_path or find_rpm_path(DEFAULT_PUMP_RPM_INPUT)
     gpu_busy_path = find_gpu_busy_path()
     if args.verbose:
         print(f"dev={dev}")
         print(f"cpu_temp={cpu_temp_path}")
         print(f"gpu_temp={gpu_temp_path}")
         print(f"rpm={rpm_path}")
+        print(f"pump_rpm={pump_rpm_path}")
         print(f"gpu_busy={gpu_busy_path}")
 
     running = True
@@ -292,10 +298,13 @@ def main():
         temp_c = (temp_raw / 1000.0) if temp_raw is not None else 0
         ghz_milli = cpu_ghz_milli()
         rpm = read_int(rpm_path) if rpm_path else 0
+        pump_rpm = read_int(pump_rpm_path) if pump_rpm_path else 0
         if args.ring == "gpu":
             ring_pct = gpu_pct_s
         elif args.ring == "rpm":
             ring_pct = clamp((rpm or 0) / 2000 * 100, 0, 100)
+        elif args.ring == "pump":
+            ring_pct = clamp((pump_rpm or 0) / args.pump_max_rpm * 100, 0, 100)
         else:
             ring_pct = cpu_pct_s
         ring_pct_s = smooth(ring_pct_s, ring_pct, args.smooth)
@@ -311,7 +320,7 @@ def main():
             print(
                 f"cpu={cpu_pct_s:5.1f}% temp={temp_c:5.1f}C/{temp_source} display={temp_display:5.1f}{args.temp_unit.upper()} "
                 f"tempbar={frame[8]:2d}/10 "
-                f"ghz={ghz_milli/1000:.2f} rpm={rpm or 0:4d} gpu={gpu_pct_s:5.1f}% "
+                f"ghz={ghz_milli/1000:.2f} rpm={rpm or 0:4d} pump={pump_rpm or 0:4d} gpu={gpu_pct_s:5.1f}% "
                 f"ring={ring_pct_s:5.1f}% frame={fmt_frame(frame)}",
                 flush=True,
             )
