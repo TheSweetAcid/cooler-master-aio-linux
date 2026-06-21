@@ -88,6 +88,7 @@ DEFAULT_TEMP_UNIT = "c"
 DEFAULT_TEMP_SWITCH = 15.0
 DEFAULT_CPU_MAX_TEMP = 95.0
 DEFAULT_GPU_MAX_TEMP = 110.0
+DEFAULT_HIGH_TEMP = 85.0
 DEFAULT_SMOOTH = 0.25
 DEFAULT_PUMP_RPM_INPUT = "fan7_input"
 DEFAULT_PUMP_MAX_RPM = 3200.0
@@ -101,6 +102,8 @@ python3 ./coolerkitty.py --ring pump --pump-max-rpm 3200
 ```
 
 Sensor discovery is intentionally still dynamic. Avoid hard-coding paths like `hwmon3/temp1_input` for shared use because Linux `hwmon` numbers can change after reboot and differ between systems.
+
+`DEFAULT_HIGH_TEMP` is reserved for a future alert policy. The current renderer does not trigger special alert animation yet.
 
 ## Device / HID notes
 

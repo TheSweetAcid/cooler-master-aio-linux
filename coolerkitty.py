@@ -21,6 +21,7 @@ DEFAULT_TEMP_UNIT = "c"  # displayed temperature unit: c, f
 DEFAULT_TEMP_SWITCH = 15.0  # seconds per CPU/GPU page when temp mode is cycle
 DEFAULT_CPU_MAX_TEMP = 95.0  # C value that maps CPU tempbar to 10/10
 DEFAULT_GPU_MAX_TEMP = 110.0  # C value that maps GPU tempbar to 10/10
+DEFAULT_HIGH_TEMP = 85.0  # future alert threshold in C; not used by current renderer
 DEFAULT_SMOOTH = 0.25  # EMA alpha for percentages; lower = calmer, 1.0 = raw
 DEFAULT_RPM_HWMON = "nct6799"  # hwmon chip name for radiator fan RPM
 DEFAULT_RPM_INPUT = "fan2_input"  # motherboard-specific fan input
