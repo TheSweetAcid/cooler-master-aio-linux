@@ -17,6 +17,7 @@ PRODUCT_ID = "0234"
 DEFAULT_INTERVAL = 5.0  # seconds between display refreshes
 DEFAULT_RING = "gpu"  # outer ring source: cpu, gpu, rpm
 DEFAULT_TEMP_MODE = "cycle"  # temperature page: cpu, gpu, cycle
+DEFAULT_TEMP_UNIT = "c"  # displayed temperature unit: c, f
 DEFAULT_TEMP_SWITCH = 15.0  # seconds per CPU/GPU page when temp mode is cycle
 DEFAULT_CPU_MAX_TEMP = 95.0  # C value that maps CPU tempbar to 10/10
 DEFAULT_GPU_MAX_TEMP = 110.0  # C value that maps GPU tempbar to 10/10
@@ -187,17 +188,17 @@ def cpu_ghz_milli():
     return clamp(round(sum(values) / len(values) / 1000), 0, 9999)
 
 
-def build_frame(cpu_pct, ghz_milli, temp_c, rpm, gpu_pct, ring_pct):
+def build_frame(cpu_pct, ghz_milli, temp_value, temp_unit, rpm, gpu_pct, ring_pct):
     frame = [0] * 13
     frame[0] = 0x01
     frame[1] = clamp(round(cpu_pct), 0, 100)
     frame[2] = (ghz_milli >> 8) & 0xff
     frame[3] = ghz_milli & 0xff
     frame[4] = 0x00
-    temp_value = clamp(round(temp_c), 0, 999)
-    frame[5] = (temp_value >> 8) & 0xff
-    frame[6] = temp_value & 0xff
-    frame[7] = 0x00
+    display_temp = clamp(round(temp_value), 0, 999)
+    frame[5] = (display_temp >> 8) & 0xff
+    frame[6] = display_temp & 0xff
+    frame[7] = 0x01 if temp_unit == "f" else 0x00
     frame[8] = 0
     rpm_value = clamp(round(rpm), 0, 9999)
     frame[9] = (rpm_value >> 8) & 0xff
@@ -215,6 +216,12 @@ def temp_bar(temp_c, max_temp_c):
     return clamp(round(temp_c / max_temp_c * 10), 0, 10)
 
 
+def display_temp(temp_c, unit):
+    if unit == "f":
+        return temp_c * 9 / 5 + 32
+    return temp_c
+
+
 def fmt_frame(frame):
     return " ".join(f"{b:02x}" for b in frame)
 
@@ -226,6 +233,7 @@ def main():
     parser.add_argument("--rpm-path", default=None, help=f"default: {DEFAULT_RPM_HWMON} {DEFAULT_RPM_INPUT}")
     parser.add_argument("--ring", choices=["cpu", "gpu", "rpm"], default=DEFAULT_RING)
     parser.add_argument("--temp-mode", choices=["cpu", "gpu", "cycle"], default=DEFAULT_TEMP_MODE)
+    parser.add_argument("--temp-unit", choices=["c", "f"], default=DEFAULT_TEMP_UNIT, help="displayed temperature unit")
     parser.add_argument("--temp-switch", type=float, default=DEFAULT_TEMP_SWITCH, help="seconds per CPU/GPU temp page in cycle mode")
     parser.add_argument("--cpu-max-temp", type=float, default=DEFAULT_CPU_MAX_TEMP, help="CPU temp in C that maps thermometer mini graph b9 to 10/10")
     parser.add_argument("--gpu-max-temp", type=float, default=DEFAULT_GPU_MAX_TEMP, help="GPU temp in C that maps thermometer mini graph b9 to 10/10")
@@ -292,7 +300,8 @@ def main():
             ring_pct = cpu_pct_s
         ring_pct_s = smooth(ring_pct_s, ring_pct, args.smooth)
 
-        data, frame = build_frame(cpu_pct_s, ghz_milli, temp_c, rpm or 0, gpu_pct_s, ring_pct_s)
+        temp_display = display_temp(temp_c, args.temp_unit)
+        data, frame = build_frame(cpu_pct_s, ghz_milli, temp_display, args.temp_unit, rpm or 0, gpu_pct_s, ring_pct_s)
         frame[4] = temp_icon
         frame[8] = temp_bar(temp_c, max_temp_c)
         data = bytes([REPORT_ID] + frame + [0] * (REPORT_LEN - 1 - len(frame)))
@@ -300,7 +309,8 @@ def main():
             f.write(data)
         if args.verbose:
             print(
-                f"cpu={cpu_pct_s:5.1f}% temp={temp_c:5.1f}C/{temp_source} tempbar={frame[8]:2d}/10 "
+                f"cpu={cpu_pct_s:5.1f}% temp={temp_c:5.1f}C/{temp_source} display={temp_display:5.1f}{args.temp_unit.upper()} "
+                f"tempbar={frame[8]:2d}/10 "
                 f"ghz={ghz_milli/1000:.2f} rpm={rpm or 0:4d} gpu={gpu_pct_s:5.1f}% "
                 f"ring={ring_pct_s:5.1f}% frame={fmt_frame(frame)}",
                 flush=True,

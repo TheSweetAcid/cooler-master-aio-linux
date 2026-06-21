@@ -84,6 +84,7 @@ The daemon keeps the common defaults near the top of `coolerkitty.py`:
 DEFAULT_INTERVAL = 5.0
 DEFAULT_RING = "gpu"
 DEFAULT_TEMP_MODE = "cycle"
+DEFAULT_TEMP_UNIT = "c"
 DEFAULT_TEMP_SWITCH = 15.0
 DEFAULT_CPU_MAX_TEMP = 95.0
 DEFAULT_GPU_MAX_TEMP = 110.0
@@ -93,7 +94,7 @@ DEFAULT_SMOOTH = 0.25
 Those defaults are meant to be readable and easy to adjust for experiments. Runtime overrides are still available through command-line arguments, for example:
 
 ```bash
-python3 ./coolerkitty.py --cpu-max-temp 90 --gpu-max-temp 105 --ring gpu --temp-switch 15
+python3 ./coolerkitty.py --cpu-max-temp 90 --gpu-max-temp 105 --ring gpu --temp-switch 15 --temp-unit c
 ```
 
 Sensor discovery is intentionally still dynamic. Avoid hard-coding paths like `hwmon3/temp1_input` for shared use because Linux `hwmon` numbers can change after reboot and differ between systems.
